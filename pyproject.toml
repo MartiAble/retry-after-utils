@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "retry-after-utils"
+version = "0.1.0"
+description = "Tiny Python utilities to parse Retry-After headers and compute safe backoff delays."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "MartiAble" }
+]
+keywords = ["http", "retry-after", "backoff", "rate-limit", "headers"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/MartiAble/retry-after-utils"
+Repository = "https://github.com/MartiAble/retry-after-utils"
+Issues = "https://github.com/MartiAble/retry-after-utils/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/retry_after_utils"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
