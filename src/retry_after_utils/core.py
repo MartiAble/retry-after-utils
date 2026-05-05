@@ -1,107 +1,110 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Optional, Union
-
-RetryAfterLike = Union[str, int, float]
+from math import ceil
+from typing import Literal
 
 
 class InvalidRetryAfter(ValueError):
     """Raised when a Retry-After header value cannot be parsed."""
 
 
-@dataclass(frozen=True)
-class _ClampConfig:
-    min_delay: float = 0.0
-    max_delay: Optional[float] = None
+@dataclass(frozen=True, slots=True)
+class ParsedRetryAfter:
+    raw: str
+    kind: Literal["delay", "date"]
+    delay_seconds: int
+    retry_at: datetime
 
 
-def _normalize_now(now: Optional[datetime]) -> datetime:
-    current = now or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        return current.replace(tzinfo=timezone.utc)
-    return current.astimezone(timezone.utc)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def seconds_until(target: datetime, *, now: Optional[datetime] = None) -> float:
-    """Return the number of seconds from `now` until `target`, clamped at zero."""
-    current = _normalize_now(now)
-    if target.tzinfo is None:
-        target = target.replace(tzinfo=timezone.utc)
-    else:
-        target = target.astimezone(timezone.utc)
-    return max(0.0, (target - current).total_seconds())
+def _coerce_now(now: datetime | None) -> datetime:
+    if now is None:
+        return _utc_now()
+    if now.tzinfo is None:
+        return now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc)
 
 
-def parse_retry_after(value: RetryAfterLike, *, now: Optional[datetime] = None) -> float:
-    """Parse a Retry-After value into seconds.
+def _parse_delay(raw: str, now: datetime) -> ParsedRetryAfter | None:
+    if not raw.isdigit():
+        return None
+    delay = int(raw)
+    return ParsedRetryAfter(
+        raw=raw,
+        kind="delay",
+        delay_seconds=delay,
+        retry_at=now + timedelta(seconds=delay),
+    )
 
-    Supports:
-    - integer or float seconds
-    - numeric strings (e.g. "120")
-    - HTTP-date strings (RFC 7231 / IMF-fixdate)
 
-    Returns a non-negative float number of seconds.
-    """
-    if isinstance(value, (int, float)):
-        return max(0.0, float(value))
+def _parse_http_date(raw: str, now: datetime) -> ParsedRetryAfter | None:
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
 
-    if not isinstance(value, str):
-        raise InvalidRetryAfter(f"Unsupported Retry-After type: {type(value)!r}")
+    if parsed is None:
+        return None
 
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    retry_time = parsed.astimezone(timezone.utc)
+    delay = max(0, ceil((retry_time - now).total_seconds()))
+    return ParsedRetryAfter(
+        raw=raw,
+        kind="date",
+        delay_seconds=delay,
+        retry_at=retry_time,
+    )
+
+
+def parse_retry_after(value: str, *, now: datetime | None = None) -> ParsedRetryAfter:
     raw = value.strip()
     if not raw:
         raise InvalidRetryAfter("Retry-After value is empty")
 
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        pass
+    current = _coerce_now(now)
 
-    try:
-        dt = parsedate_to_datetime(raw)
-    except (TypeError, ValueError, IndexError) as exc:
-        raise InvalidRetryAfter(f"Invalid Retry-After value: {value!r}") from exc
+    parsed = _parse_delay(raw, current)
+    if parsed is not None:
+        return parsed
 
-    return seconds_until(dt, now=now)
+    parsed = _parse_http_date(raw, current)
+    if parsed is not None:
+        return parsed
 
-
-def _apply_clamp(delay: float, config: _ClampConfig) -> float:
-    delay = max(config.min_delay, delay)
-    if config.max_delay is not None:
-        delay = min(config.max_delay, delay)
-    return delay
+    raise InvalidRetryAfter(f"Invalid Retry-After value: {value!r}")
 
 
-def compute_retry_delay(
-    retry_after: Optional[RetryAfterLike],
+def seconds_until_retry(
+    value: str,
     *,
-    fallback: float = 0.0,
-    jitter: float = 0.0,
-    min_delay: float = 0.0,
-    max_delay: Optional[float] = None,
-    now: Optional[datetime] = None,
-) -> float:
-    """Compute a final retry delay in seconds.
+    now: datetime | None = None,
+    clamp_min: int = 0,
+    clamp_max: int | None = None,
+) -> int:
+    parsed = parse_retry_after(value, now=now)
+    seconds = parsed.delay_seconds
+    if seconds < clamp_min:
+        seconds = clamp_min
+    if clamp_max is not None and seconds > clamp_max:
+        seconds = clamp_max
+    return seconds
 
-    Parameters:
-    - retry_after: parsed from an HTTP Retry-After header value; if None, fallback is used.
-    - fallback: used when no Retry-After header is available.
-    - jitter: constant seconds added after parsing/clamping.
-    - min_delay/max_delay: lower/upper bounds applied before jitter.
-    - now: optional datetime for deterministic testing of HTTP-date inputs.
-    """
-    if fallback < 0:
-        raise ValueError("fallback must be >= 0")
-    if jitter < 0:
-        raise ValueError("jitter must be >= 0")
-    if min_delay < 0:
-        raise ValueError("min_delay must be >= 0")
-    if max_delay is not None and max_delay < min_delay:
-        raise ValueError("max_delay must be >= min_delay")
 
-    base_delay = fallback if retry_after is None else parse_retry_after(retry_after, now=now)
-    clamped = _apply_clamp(base_delay, _ClampConfig(min_delay=min_delay, max_delay=max_delay))
-    return clamped + jitter
+def retry_at(value: str, *, now: datetime | None = None) -> datetime:
+    return parse_retry_after(value, now=now).retry_at
+
+
+def is_retry_after_header(value: str) -> bool:
+    try:
+        parse_retry_after(value)
+        return True
+    except InvalidRetryAfter:
+        return False

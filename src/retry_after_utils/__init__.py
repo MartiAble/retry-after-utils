@@ -1,13 +1,17 @@
 from .core import (
     InvalidRetryAfter,
-    compute_retry_delay,
+    ParsedRetryAfter,
+    is_retry_after_header,
     parse_retry_after,
-    seconds_until,
+    retry_at,
+    seconds_until_retry,
 )
 
 __all__ = [
     "InvalidRetryAfter",
-    "compute_retry_delay",
+    "ParsedRetryAfter",
+    "is_retry_after_header",
     "parse_retry_after",
-    "seconds_until",
+    "retry_at",
+    "seconds_until_retry",
 ]

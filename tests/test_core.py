@@ -1,61 +1,54 @@
 from datetime import datetime, timezone
+import unittest
 
-import pytest
-
-from retry_after_utils import InvalidRetryAfter, compute_retry_delay, parse_retry_after, seconds_until
-
-
-FIXED_NOW = datetime(2026, 4, 17, 13, 7, 0, tzinfo=timezone.utc)
-
-
-def test_parse_numeric_string():
-    assert parse_retry_after("120") == 120.0
+from retry_after_utils import (
+    InvalidRetryAfter,
+    is_retry_after_header,
+    parse_retry_after,
+    retry_at,
+    seconds_until_retry,
+)
 
 
-def test_parse_float_input():
-    assert parse_retry_after(2.5) == 2.5
+class RetryAfterUtilsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.now = datetime(2026, 5, 5, 17, 0, 0, tzinfo=timezone.utc)
+
+    def test_parse_delay_value(self) -> None:
+        parsed = parse_retry_after("120", now=self.now)
+        self.assertEqual(parsed.kind, "delay")
+        self.assertEqual(parsed.delay_seconds, 120)
+        self.assertEqual(parsed.retry_at, datetime(2026, 5, 5, 17, 2, 0, tzinfo=timezone.utc))
+
+    def test_parse_http_date_value(self) -> None:
+        value = "Tue, 05 May 2026 17:01:30 GMT"
+        parsed = parse_retry_after(value, now=self.now)
+        self.assertEqual(parsed.kind, "date")
+        self.assertEqual(parsed.retry_at, datetime(2026, 5, 5, 17, 1, 30, tzinfo=timezone.utc))
+        self.assertEqual(parsed.delay_seconds, 90)
+
+    def test_past_http_date_clamps_delay_to_zero(self) -> None:
+        value = "Tue, 05 May 2026 16:59:59 GMT"
+        parsed = parse_retry_after(value, now=self.now)
+        self.assertEqual(parsed.delay_seconds, 0)
+        self.assertEqual(parsed.retry_at, datetime(2026, 5, 5, 16, 59, 59, tzinfo=timezone.utc))
+
+    def test_seconds_until_retry_clamp_max(self) -> None:
+        self.assertEqual(seconds_until_retry("120", now=self.now, clamp_max=60), 60)
+
+    def test_retry_at_helper(self) -> None:
+        value = "Tue, 05 May 2026 17:05:00 GMT"
+        self.assertEqual(retry_at(value, now=self.now), datetime(2026, 5, 5, 17, 5, 0, tzinfo=timezone.utc))
+
+    def test_invalid_value_raises(self) -> None:
+        with self.assertRaises(InvalidRetryAfter):
+            parse_retry_after("soon", now=self.now)
+
+    def test_is_retry_after_header(self) -> None:
+        self.assertTrue(is_retry_after_header("60"))
+        self.assertTrue(is_retry_after_header("Tue, 05 May 2026 17:01:30 GMT"))
+        self.assertFalse(is_retry_after_header("banana"))
 
 
-def test_parse_http_date():
-    value = "Fri, 17 Apr 2026 13:08:30 GMT"
-    assert parse_retry_after(value, now=FIXED_NOW) == 90.0
-
-
-def test_parse_past_http_date_clamps_to_zero():
-    value = "Fri, 17 Apr 2026 13:00:00 GMT"
-    assert parse_retry_after(value, now=FIXED_NOW) == 0.0
-
-
-def test_invalid_value_raises():
-    with pytest.raises(InvalidRetryAfter):
-        parse_retry_after("not-a-date")
-
-
-def test_seconds_until_naive_datetime_treated_as_utc():
-    target = datetime(2026, 4, 17, 13, 8, 0)
-    assert seconds_until(target, now=FIXED_NOW) == 60.0
-
-
-def test_compute_retry_delay_uses_fallback_when_missing():
-    assert compute_retry_delay(None, fallback=3.0) == 3.0
-
-
-def test_compute_retry_delay_applies_bounds_and_jitter():
-    assert compute_retry_delay("1", min_delay=2.0, max_delay=5.0, jitter=0.5) == 2.5
-
-
-def test_compute_retry_delay_honors_max_delay():
-    assert compute_retry_delay("20", max_delay=5.0) == 5.0
-
-
-def test_compute_retry_delay_for_http_date():
-    value = "Fri, 17 Apr 2026 13:09:00 GMT"
-    assert compute_retry_delay(value, now=FIXED_NOW, jitter=1.0) == 121.0
-
-
-def test_compute_retry_delay_rejects_invalid_arguments():
-    with pytest.raises(ValueError):
-        compute_retry_delay(None, fallback=-1)
-
-    with pytest.raises(ValueError):
-        compute_retry_delay(None, max_delay=1, min_delay=2)
+if __name__ == "__main__":
+    unittest.main()
