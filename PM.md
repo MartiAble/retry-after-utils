@@ -37,5 +37,5 @@ Python
 - [x] Add CI workflow
 - [x] Verify repo structure
 - [x] Document limitations / assumptions
-- [ ] Create public GitHub repo under `MartiAble`
-- [ ] Commit and push
+- [x] Create public GitHub repo under `MartiAble`
+- [x] Commit and push
